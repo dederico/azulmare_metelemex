@@ -59,7 +59,7 @@ COLLECTION_DATA_ENDPOINT=https://your-api.com/collection-data
 
 1. Start the Flask application:
 ```bash
-python app.py
+python simple_app.py
 ```
 
 2. Access the application in your browser at:
