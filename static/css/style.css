@@ -1,0 +1,109 @@
+/* Custom styles for Decision Making Assistant */
+
+body {
+    background-color: #f5f8fa;
+    color: #333;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.container {
+    max-width: 1200px;
+}
+
+header {
+    border-bottom: 1px solid #e5e5e5;
+    padding-bottom: 1rem;
+}
+
+.card {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    border: none;
+    margin-bottom: 20px;
+}
+
+.card-header {
+    background-color: #ffffff;
+    border-bottom: 1px solid #eaeaea;
+}
+
+.card-body {
+    padding: 1.5rem;
+}
+
+textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.btn-primary {
+    background-color: #4a76f9;
+    border-color: #4a76f9;
+}
+
+.btn-primary:hover {
+    background-color: #3a66e9;
+    border-color: #3a66e9;
+}
+
+footer {
+    border-top: 1px solid #e5e5e5;
+    padding-top: 1rem;
+    margin-top: 2rem;
+}
+
+/* Dashboard-specific styles */
+.card {
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+.bg-primary, .bg-success, .bg-info, .bg-warning {
+    color: white;
+}
+
+.bg-warning {
+    color: #212529;
+}
+
+.table th {
+    font-weight: 600;
+}
+
+.list-group-item {
+    border-left: none;
+    border-right: none;
+}
+
+/* Response styling */
+#response-content {
+    white-space: pre-line;
+}
+
+.spinner-border {
+    margin: 0 auto;
+    display: block;
+}
+
+/* Agent badges */
+.badge {
+    font-weight: 500;
+    padding: 0.4em 0.6em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 15px;
+    }
+    
+    h1 {
+        font-size: 1.8rem;
+    }
+    
+    .card-title {
+        font-size: 1.2rem;
+    }
+}

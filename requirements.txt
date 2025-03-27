@@ -1,0 +1,21 @@
+# Core web framework
+flask
+flask-cors
+gunicorn
+
+# Data handling
+pandas
+numpy
+openpyxl
+xlrd
+aioflask
+
+# Configuration and utilities
+pydantic
+python-dotenv
+requests
+schedule
+
+# OpenAI API - no version specified to avoid conflicts
+openai
+openai-agents

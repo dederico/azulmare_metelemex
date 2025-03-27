@@ -1,0 +1,117 @@
+{
+  "total_revenue": 2500000,
+  "total_units": 18500,
+  "avg_deal_size": 135.14,
+  "conversion_rate": 22.5,
+  "products": [
+    {
+      "id": "prod-001",
+      "name": "Product A",
+      "revenue": 950000,
+      "units": 7200,
+      "growth": 12.5
+    },
+    {
+      "id": "prod-002",
+      "name": "Product B",
+      "revenue": 750000,
+      "units": 5500,
+      "growth": 8.3
+    },
+    {
+      "id": "prod-003",
+      "name": "Product C",
+      "revenue": 800000,
+      "units": 5800,
+      "growth": -2.1
+    }
+  ],
+  "regions": [
+    {
+      "id": "reg-001",
+      "name": "North",
+      "revenue": 950000,
+      "growth": 10.2
+    },
+    {
+      "id": "reg-002",
+      "name": "South",
+      "revenue": 600000,
+      "growth": 5.7
+    },
+    {
+      "id": "reg-003",
+      "name": "East",
+      "revenue": 500000,
+      "growth": 7.3
+    },
+    {
+      "id": "reg-004",
+      "name": "West",
+      "revenue": 450000,
+      "growth": 12.1
+    }
+  ],
+  "sales_reps": [
+    {
+      "id": "rep-001",
+      "name": "John Smith",
+      "revenue": 350000,
+      "deals_closed": 45,
+      "quota_attainment": 110
+    },
+    {
+      "id": "rep-002",
+      "name": "Emily Johnson",
+      "revenue": 420000,
+      "deals_closed": 52,
+      "quota_attainment": 125
+    },
+    {
+      "id": "rep-003",
+      "name": "Michael Brown",
+      "revenue": 280000,
+      "deals_closed": 38,
+      "quota_attainment": 92
+    }
+  ],
+  "forecasts": {
+    "next_month": {
+      "revenue_forecast": 850000,
+      "growth_percentage": 5.2,
+      "by_product": {
+        "prod-001": {
+          "revenue_forecast": 330000,
+          "units_forecast": 2500
+        },
+        "prod-002": {
+          "revenue_forecast": 260000,
+          "units_forecast": 1900
+        },
+        "prod-003": {
+          "revenue_forecast": 260000,
+          "units_forecast": 1900
+        }
+      }
+    },
+    "next_quarter": {
+      "revenue_forecast": 2600000,
+      "growth_percentage": 4.0,
+      "by_product": {
+        "prod-001": {
+          "revenue_forecast": 990000,
+          "units_forecast": 7500
+        },
+        "prod-002": {
+          "revenue_forecast": 780000,
+          "units_forecast": 5700
+        },
+        "prod-003": {
+          "revenue_forecast": 830000,
+          "units_forecast": 6000
+        }
+      }
+    }
+  },
+  "last_updated": "2025-03-26T12:12:09.559483"
+}
