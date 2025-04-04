@@ -103,8 +103,26 @@ class DataManager:
                 if os.path.exists(cache_file):
                     print(f"DEBUG: Cargando desde caché: {cache_file}")
                     with open(cache_file, 'r') as f:
-                        self._sales_data = json.load(f)
-                        logger.info(f"Datos de ventas cargados desde caché: {cache_file}")
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            # Convert list format to proper dictionary structure
+                            self._sales_data = {
+                                "raw_data": data,
+                                "aggregations": {},
+                                "kpis": {"total_ventas": 0}
+                            }
+                        else:
+                            self._sales_data = data
+
+                        
+                        # Ensure cached data is in the correct format
+                        if isinstance(self._sales_data, list):
+                            print("DEBUG: Converting legacy list format to dictionary format")
+                            self._sales_data = {
+                                "raw_data": self._sales_data,
+                                "aggregations": {},
+                                "kpis": {"total_ventas": 0}
+                            }         
                 else:
                     print("DEBUG: Caché no encontrado, procesando datos desde fuente...")
                     # Usar pandas para procesar eficientemente el archivo grande
@@ -298,23 +316,23 @@ class DataManager:
         Aplica filtros y agregaciones a los datos de ventas
         """
         print(f"DEBUG _filter_and_aggregate_sales: Iniciando con filters={filters}, aggregation={aggregation}")
-        
-        # Verificación inicial crítica
         print(f"DEBUG: Tipo de self._sales_data en _filter_and_aggregate_sales: {type(self._sales_data)}")
-        
-        # Si sales_data es una lista, esto causaría el error "list indices must be integers or slices, not str"
+
+        # Format validation and conversion - single clean block
         if isinstance(self._sales_data, list):
-            print("ERROR ENCONTRADO: self._sales_data es una lista, pero se intenta acceder con claves de diccionario.")
-            print("Esto causa el error: list indices must be integers or slices, not str")
-            
-            # Convertirlo a un formato de diccionario para evitar el error
-            processed_data = {
+            print("DEBUG: Converting list sales data to dictionary format")
+            self._sales_data = {
                 "raw_data": self._sales_data,
                 "aggregations": {},
                 "kpis": {"total_ventas": 0}
             }
-            self._sales_data = processed_data
-            print("DEBUG: self._sales_data convertido a formato de diccionario")
+        elif not isinstance(self._sales_data, dict):
+            print("DEBUG: Invalid data format, initializing empty structure")
+            self._sales_data = {
+                "raw_data": [],
+                "aggregations": {},
+                "kpis": {"total_ventas": 0}
+            }
         
         if not self._sales_data:
             print("DEBUG: self._sales_data está vacío")
@@ -519,14 +537,14 @@ class DataManager:
     def refresh_sales_data(self) -> Dict[str, Any]:
         """
         Refresh sales data from source
-        
+
         Returns:
             Updated sales data
         """
         try:
             # Get sales data endpoint from config
             endpoint = config.DATA_ENDPOINTS.get('sales')
-            
+
             # For development, use sample data if endpoint is not configured
             if not endpoint:
                 logger.info("Using sample sales data (no endpoint configured)")
@@ -536,14 +554,20 @@ class DataManager:
                 from endpoints.data_endpoints import fetch_data
                 raw_data = fetch_data(endpoint)
                 data = process_sales_data(raw_data)
-            
+
+                # Convert to pandas DataFrame for preprocessing
+                sales_df = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data
+
+                # Preprocess the data to ensure correct format
+                data = self._preprocess_sales_data(sales_df)
+
             # Add timestamp
             data["last_updated"] = datetime.datetime.now().isoformat()
-            
+
             # Cache the data
             self._sales_data = data
             self._save_cached_data('sales', data)
-            
+
             return data
         except Exception as e:
             logger.error(f"Error refreshing sales data: {str(e)}")
