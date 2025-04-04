@@ -46,6 +46,18 @@ class DataManager:
                     with open(cache_file, 'r') as f:
                         data = json.load(f)
                     
+                    # Convert list format to proper dictionary structure for sales data
+                    if data_type == 'sales' and isinstance(data, list):
+                        data = {
+                            "raw_data": data,
+                            "aggregations": {},
+                            "kpis": {
+                                "total_ventas": sum(item.get('IMPORTE_TOTAL', 0) for item in data),
+                                "total_transacciones": len(data),
+                                "ultima_actualizacion": datetime.datetime.now().isoformat()
+                            }
+                        }
+                    
                     # Set the data to the appropriate attribute
                     setattr(self, f"_{data_type}_data", data)
                     logger.info(f"Loaded cached {data_type} data from {cache_file}")
@@ -80,135 +92,48 @@ class DataManager:
             self.refresh_marketing_data()
         return self._marketing_data or {}
     
-    def get_sales_data(self, filters=None, aggregation=None) -> Dict[str, Any]:
-        """
-        Obtener datos de ventas con posibilidad de filtrado y agregación
+    def get_sales_data(self, filters=None, aggregation=None):
+        print(f"DEBUG: Solicitando datos de ventas. filters={filters}, aggregation={aggregation}")
         
-        Args:
-            filters: Diccionario con filtros (ej: {'VENDEDOR': 'GOL Tampico'})
-            aggregation: Tipo de agregación ('por_vendedor', 'por_cliente', 'por_mes', etc.)
+        if not self._sales_data:
+            # Si no hay datos cargados, cargar datos de muestra
+            self._sales_data = self._get_sample_sales_data()
+    
+        print(f"DEBUG: Tipo de self._sales_data: {type(self._sales_data)}")
+        print(f"DEBUG: Claves en self._sales_data: {self._sales_data.keys() if isinstance(self._sales_data, dict) else 'No es un diccionario'}")
         
-        Returns:
-            Datos de ventas procesados según filtros y agregaciones
-        """
-        try:
-            # Registro para depuración
-            print(f"DEBUG: Solicitando datos de ventas. filters={filters}, aggregation={aggregation}")
+        # Asegurarse de que _sales_data tenga la estructura esperada
+        if not isinstance(self._sales_data, dict) or 'raw_data' not in self._sales_data:
+            print("ERROR: self._sales_data no tiene la estructura esperada")
+            return {"error": "Estructura de datos inválida"}
+        
+        # Crear DataFrame de vendedores
+        df_vendedores = pd.DataFrame(self._sales_data['raw_data'])
+        
+        if 'NOMBRE_ASESOR' in df_vendedores.columns and 'IMPORTE_TOTAL' in df_vendedores.columns:
+            vendedores_analysis = df_vendedores.groupby('NOMBRE_ASESOR').agg({
+                'IMPORTE_TOTAL': ['sum', 'mean', 'count'],
+                'CLIENTE': 'nunique'
+            }).reset_index()
             
-            # Si no tenemos los datos en memoria, cargarlos
-            if self._sales_data is None:
-                print("DEBUG: self._sales_data es None, cargando datos...")
-                # Verificar si existen en caché
-                cache_file = os.path.join(self.cache_dir, "sales_data.json")
-                if os.path.exists(cache_file):
-                    print(f"DEBUG: Cargando desde caché: {cache_file}")
-                    with open(cache_file, 'r') as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            # Convert list format to proper dictionary structure
-                            self._sales_data = {
-                                "raw_data": data,
-                                "aggregations": {},
-                                "kpis": {"total_ventas": 0}
-                            }
-                        else:
-                            self._sales_data = data
-
-                        
-                        # Ensure cached data is in the correct format
-                        if isinstance(self._sales_data, list):
-                            print("DEBUG: Converting legacy list format to dictionary format")
-                            self._sales_data = {
-                                "raw_data": self._sales_data,
-                                "aggregations": {},
-                                "kpis": {"total_ventas": 0}
-                            }         
-                else:
-                    print("DEBUG: Caché no encontrado, procesando datos desde fuente...")
-                    # Usar pandas para procesar eficientemente el archivo grande
-                    import pandas as pd
-                    
-                    # Determinar la fuente de datos (endpoint o archivo local)
-                    source = config.DATA_ENDPOINTS.get('sales')
-                    if source:
-                        print(f"DEBUG: Usando fuente de datos API: {source}")
-                        # Descargar desde API
-                        from endpoints.data_endpoints import fetch_data
-                        raw_data = fetch_data(source)
-                        
-                        # Convertir a DataFrame
-                        sales_df = pd.DataFrame(raw_data)
-                        logger.info(f"Datos de ventas descargados desde API: {len(sales_df)} registros")
-                    else:
-                        # Cargar desde archivo local
-                        local_file = os.path.join('data_files', 'sales_data.json')
-                        print(f"DEBUG: Buscando archivo local: {local_file}")
-                        if os.path.exists(local_file):
-                            logger.info(f"Cargando datos de ventas desde archivo local: {local_file}")
-                            
-                            # Determinar si el archivo es grande (>50MB)
-                            file_size = os.path.getsize(local_file) / (1024 * 1024)  # Tamaño en MB
-                            print(f"DEBUG: Tamaño del archivo: {file_size} MB")
-                            
-                            if file_size > 50:
-                                print("DEBUG: Archivo grande, procesando en chunks...")
-                                # Usar chunks para archivos muy grandes
-                                chunks = []
-                                for chunk in pd.read_json(local_file, lines=True, chunksize=10000):
-                                    chunks.append(chunk)
-                                sales_df = pd.concat(chunks)
-                                logger.info(f"Archivo grande procesado en chunks: {len(sales_df)} registros")
-                            else:
-                                print("DEBUG: Cargando archivo completo...")
-                                # Cargar archivo completo
-                                sales_df = pd.read_json(local_file, lines=True)
-                                logger.info(f"Archivo cargado completo: {len(sales_df)} registros")
-                        else:
-                            print("DEBUG: Archivo local no encontrado, usando datos de muestra...")
-                            # Si no hay datos, generar muestra
-                            logger.warning(f"Archivo de ventas no encontrado: {local_file}. Usando datos de muestra.")
-                            sales_df = pd.DataFrame(self._get_sample_sales_data())
-                    
-                    print(f"DEBUG: Preprocesando datos, shape={sales_df.shape}")
-                    # Preprocesar datos para análisis eficiente
-                    self._sales_data = self._preprocess_sales_data(sales_df)
-                    
-                    print(f"DEBUG: Guardando en caché: {cache_file}")
-                    # Guardar en caché
-                    with open(cache_file, 'w') as f:
-                        json.dump(self._sales_data, f)
-                        logger.info(f"Datos de ventas guardados en caché: {cache_file}")
+            vendedores_analysis.columns = ['NOMBRE_ASESOR', 'VENTAS_TOTALES', 'VENTA_PROMEDIO', 'NUMERO_VENTAS', 'CLIENTES_UNICOS']
+            vendedores_analysis = vendedores_analysis.sort_values('VENTAS_TOTALES', ascending=False)
             
-            # Verificar estructura después de cargar
-            print(f"DEBUG: Tipo de self._sales_data: {type(self._sales_data)}")
-            if isinstance(self._sales_data, dict):
-                print(f"DEBUG: Claves en self._sales_data: {list(self._sales_data.keys())}")
-            elif isinstance(self._sales_data, list):
-                print(f"DEBUG: self._sales_data es una lista con {len(self._sales_data)} elementos")
-                if self._sales_data:
-                    print(f"DEBUG: Tipo del primer elemento: {type(self._sales_data[0])}")
-                    print(f"DEBUG: Muestra del primer elemento: {str(self._sales_data[0])[:100]}...")
+            # Añadir este análisis a las agregaciones existentes
+            self._sales_data['aggregations']['analisis_vendedores'] = vendedores_analysis.to_dict('records')
             
-            # Obtener la versión filtrada de los datos
-            print(f"DEBUG: Llamando a _filter_and_aggregate_sales con filters={filters}, aggregation={aggregation}")
-            try:
-                result = self._filter_and_aggregate_sales(filters, aggregation)
-                print("DEBUG: _filter_and_aggregate_sales completado exitosamente")
-                return result
-            except Exception as e:
-                print(f"ERROR EN _filter_and_aggregate_sales: {str(e)}")
-                print(f"TRACEBACK: {traceback.format_exc()}")
-                return {"error": f"Error en filtrado/agregación: {str(e)}", "traceback": traceback.format_exc()}
-                
-        except Exception as e:
-            print(f"ERROR GENERAL: {str(e)}")
-            print(f"TRACEBACK COMPLETO: {traceback.format_exc()}")
-            logger.error(f"Error procesando datos de ventas: {str(e)}")
-            return {"error": str(e), "traceback": traceback.format_exc()}
+            # Añadir KPIs relacionados con vendedores
+            self._sales_data['kpis']['top_vendedor'] = vendedores_analysis.iloc[0]['NOMBRE_ASESOR']
+            self._sales_data['kpis']['total_vendedores'] = len(vendedores_analysis)
+            self._sales_data['kpis']['promedio_ventas_por_vendedor'] = vendedores_analysis['VENTAS_TOTALES'].mean()
+        result = self._filter_and_aggregate_sales(filters, aggregation)
+        if isinstance(result, dict) and 'kpis' not in result:
+            result['kpis'] = self._sales_data('kpis',{})
+        return result
 
     def _preprocess_sales_data(self, df):
         """
-        Preprocesa los datos de ventas para un acceso y análisis más eficiente
+        Preprocesa los datos de ventas para un acceso y análisis eficiente
         
         Args:
             df: DataFrame de pandas con los datos de ventas
@@ -216,6 +141,8 @@ class DataManager:
         Returns:
             Diccionario con datos procesados y métricas precalculadas
         """
+        print(f"DEBUG: Iniciando preprocesamiento de datos, shape={df.shape}")
+        
         # Asegurar que las fechas estén en formato datetime
         if 'FECHA' in df.columns:
             df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
@@ -225,92 +152,150 @@ class DataManager:
             df['AÑO'] = df['FECHA'].dt.year
             df['TRIMESTRE'] = df['FECHA'].dt.quarter
             df['SEMANA'] = df['FECHA'].dt.isocalendar().week
+            
+            print(f"DEBUG: Fechas procesadas y columnas temporales añadidas")
         
-        # Calcular el total de ventas (asumiendo que IMPORTE_TOTAL es el valor de la venta)
+        # Asegurar que los valores numéricos sean de tipo float
+        if 'IMPORTE_TOTAL' in df.columns:
+            df['IMPORTE_TOTAL'] = pd.to_numeric(df['IMPORTE_TOTAL'], errors='coerce')
+            print(f"DEBUG: IMPORTE_TOTAL convertido a numérico")
+        
+        if 'PRECIO_UNITARIO' in df.columns:
+            df['PRECIO_UNITARIO'] = pd.to_numeric(df['PRECIO_UNITARIO'], errors='coerce')
+        
+        if 'CANTIDAD' in df.columns:
+            df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce')
+
+        # Calcular el total de ventas
         total_ventas = df['IMPORTE_TOTAL'].sum() if 'IMPORTE_TOTAL' in df.columns else 0
+        print(f"DEBUG: Total de ventas calculado: {total_ventas}")
         
         # Realizar agregaciones precalculadas para consultas comunes
         aggregations = {}
+        print("DEBUG: Calculando agregaciones...")
         
         if 'VENDEDOR' in df.columns and 'IMPORTE_TOTAL' in df.columns:
-            aggregations["ventas_por_vendedor"] = df.groupby('VENDEDOR')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).to_dict('index')
+            print("DEBUG: Calculando ventas_por_vendedor")
+            vendedor_agg = df.groupby('VENDEDOR')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).reset_index()
+            aggregations["ventas_por_vendedor"] = vendedor_agg.to_dict('records')
         
         if 'CLIENTE' in df.columns and 'IMPORTE_TOTAL' in df.columns:
-            aggregations["ventas_por_cliente"] = df.groupby('CLIENTE')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).to_dict('index')
+            print("DEBUG: Calculando ventas_por_cliente")
+            cliente_agg = df.groupby('CLIENTE')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).reset_index()
+            aggregations["ventas_por_cliente"] = cliente_agg.to_dict('records')
         
         if all(col in df.columns for col in ['AÑO', 'MES', 'IMPORTE_TOTAL']):
+            print("DEBUG: Calculando ventas_por_mes")
             # Agrupar por año y mes
-            monthly_sales = df.groupby(['AÑO', 'MES'])['IMPORTE_TOTAL'].sum()
-            # Convertir a formato más fácil de usar
-            ventas_por_mes = {}
-            for (año, mes), valor in monthly_sales.items():
-                key = f"{año}-{mes:02d}"
-                ventas_por_mes[key] = float(valor)
-            aggregations["ventas_por_mes"] = ventas_por_mes
+            monthly_sales = df.groupby(['AÑO', 'MES'])['IMPORTE_TOTAL'].agg(['sum', 'count']).reset_index()
+            aggregations["ventas_por_mes"] = monthly_sales.to_dict('records')
         
         if 'ARTICULO' in df.columns and 'IMPORTE_TOTAL' in df.columns:
-            aggregations["ventas_por_articulo"] = df.groupby('ARTICULO')['IMPORTE_TOTAL'].agg(['sum', 'count']).to_dict('index')
-        
-        if all(col in df.columns for col in ['AÑO', 'TRIMESTRE', 'IMPORTE_TOTAL']):
-            # Agrupar por año y trimestre
-            quarterly_sales = df.groupby(['AÑO', 'TRIMESTRE'])['IMPORTE_TOTAL'].sum()
-            # Convertir a formato más fácil de usar
-            ventas_por_trimestre = {}
-            for (año, trimestre), valor in quarterly_sales.items():
-                key = f"{año}-Q{trimestre}"
-                ventas_por_trimestre[key] = float(valor)
-            aggregations["ventas_por_trimestre"] = ventas_por_trimestre
+            print("DEBUG: Calculando ventas_por_articulo")
+            articulo_agg = df.groupby('ARTICULO')['IMPORTE_TOTAL'].agg(['sum', 'count']).reset_index()
+            aggregations["ventas_por_articulo"] = articulo_agg.to_dict('records')
         
         if 'LINEA' in df.columns and 'IMPORTE_TOTAL' in df.columns:
-            aggregations["ventas_por_linea"] = df.groupby('LINEA')['IMPORTE_TOTAL'].agg(['sum', 'count']).to_dict('index')
+            print("DEBUG: Calculando ventas_por_linea")
+            linea_agg = df.groupby('LINEA')['IMPORTE_TOTAL'].agg(['sum', 'count']).reset_index()
+            aggregations["ventas_por_linea"] = linea_agg.to_dict('records')
+            
+        # Agregar datos específicos para responder las preguntas de ventas
+        if 'TIPO_CLIENTE' in df.columns and 'CLIENTE' in df.columns and 'IMPORTE_TOTAL' in df.columns:
+            print("DEBUG: Calculando métricas por tipo de cliente")
+            tipo_cliente_agg = df.groupby('TIPO_CLIENTE')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).reset_index()
+            aggregations["ventas_por_tipo_cliente"] = tipo_cliente_agg.to_dict('records')
+        
+        # Para ciclo de ventas, agrupar por fecha
+        if 'FECHA' in df.columns and 'CLASIFICACION' in df.columns:
+            print("DEBUG: Analizando ciclo de ventas")
+            # Filtrar solo ventas completadas
+            ventas_df = df[df['CLASIFICACION'] == 'Ventas']
+            
+            ciclo_ventas_mensual = ventas_df.groupby(['AÑO', 'MES'])['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).reset_index()
+            aggregations["ciclo_ventas_mensual"] = ciclo_ventas_mensual.to_dict('records')
+        
+        # Para retención de clientes, necesitamos analizar transacciones repetidas
+        if 'CLIENTE' in df.columns and 'FECHA' in df.columns:
+            print("DEBUG: Calculando retención de clientes")
+            # Conseguir primera y última compra de cada cliente
+            cliente_compras = df.groupby('CLIENTE')['FECHA'].agg(['min', 'max', 'count']).reset_index()
+            cliente_compras.columns = ['CLIENTE', 'primera_compra', 'ultima_compra', 'total_compras']
+            
+            # Calcular si los clientes son recurrentes (más de una compra)
+            clientes_totales = cliente_compras.shape[0]
+            clientes_recurrentes = cliente_compras[cliente_compras['total_compras'] > 1].shape[0]
+            
+            if clientes_totales > 0:
+                tasa_retencion = (clientes_recurrentes / clientes_totales) * 100
+            else:
+                tasa_retencion = 0
+                
+            aggregations["retencion_clientes"] = {
+                "clientes_totales": clientes_totales,
+                "clientes_recurrentes": clientes_recurrentes,
+                "tasa_retencion": tasa_retencion
+            }
         
         # Calcular KPIs críticos
+        current_date = datetime.datetime.now()
+        current_month = current_date.month
+        current_year = current_date.year
+        
+        # Filtrar datos del mes actual para KPIs actuales
+        current_month_data = df[(df['AÑO'] == current_year) & (df['MES'] == current_month)] if 'AÑO' in df.columns and 'MES' in df.columns else pd.DataFrame()
+        
         kpis = {
             "total_ventas": float(total_ventas),
             "ticket_promedio": float(df['IMPORTE_TOTAL'].mean()) if 'IMPORTE_TOTAL' in df.columns else 0,
             "total_transacciones": len(df),
             "total_clientes": df['CLIENTE'].nunique() if 'CLIENTE' in df.columns else 0,
             "total_vendedores": df['VENDEDOR'].nunique() if 'VENDEDOR' in df.columns else 0,
-            "monto_max_venta": float(df['IMPORTE_TOTAL'].max()) if 'IMPORTE_TOTAL' in df.columns else 0,
+            "ventas_mes_actual": float(current_month_data['IMPORTE_TOTAL'].sum()) if not current_month_data.empty and 'IMPORTE_TOTAL' in current_month_data.columns else 0,
             "ultima_actualizacion": datetime.datetime.now().isoformat()
         }
         
         # Añadir datos de tendencia (últimos 6 meses si hay datos suficientes)
-        if all(col in df.columns for col in ['FECHA', 'IMPORTE_TOTAL']):
-            # Ordenar por fecha
-            df_sorted = df.sort_values('FECHA')
-            
+        if 'FECHA' in df.columns and 'IMPORTE_TOTAL' in df.columns:
+            print("DEBUG: Calculando tendencia de últimos 6 meses")
             # Obtener los últimos 6 meses
             last_6_months = {}
             today = datetime.datetime.now()
+            
             for i in range(6):
                 target_date = today - datetime.timedelta(days=30 * i)
                 month_key = f"{target_date.year}-{target_date.month:02d}"
                 
-                month_data = df_sorted[
-                    (df_sorted['FECHA'].dt.year == target_date.year) & 
-                    (df_sorted['FECHA'].dt.month == target_date.month)
+                month_data = df[
+                    (df['FECHA'].dt.year == target_date.year) & 
+                    (df['FECHA'].dt.month == target_date.month)
                 ]
                 
-                last_6_months[month_key] = {
-                    "ventas": float(month_data['IMPORTE_TOTAL'].sum()) if len(month_data) > 0 else 0,
-                    "transacciones": len(month_data),
-                    "clientes": month_data['CLIENTE'].nunique() if 'CLIENTE' in month_data else 0
-                }
+                if not month_data.empty:
+                    last_6_months[month_key] = {
+                        "ventas": float(month_data['IMPORTE_TOTAL'].sum()),
+                        "transacciones": len(month_data),
+                        "clientes": month_data['CLIENTE'].nunique() if 'CLIENTE' in month_data else 0,
+                        "ticket_promedio": float(month_data['IMPORTE_TOTAL'].mean()) if 'IMPORTE_TOTAL' in month_data.columns else 0
+                    }
             
             kpis["tendencia_6_meses"] = last_6_months
         
-        # Convertir el DataFrame a diccionario para guardarlo en caché
-        # Pero mantener solo los datos necesarios para reducir tamaño
-        essential_columns = ['ID', 'FECHA', 'VENDEDOR', 'CLIENTE', 'ARTICULO', 'IMPORTE_TOTAL', 'CANTIDAD']
-        raw_data = df[essential_columns].to_dict(orient='records') if all(col in df.columns for col in essential_columns) else df.to_dict(orient='records')
+        print(f"DEBUG: Preprocesamiento completado. Agregaciones: {len(aggregations)}, KPIs: {len(kpis)}")
         
-        return {
-            "raw_data": raw_data,  # Mantener datos esenciales
-            "aggregations": aggregations,  # Guardar agregaciones precalculadas
-            "kpis": kpis  # Guardar KPIs precalculados
+        # Convertir el DataFrame a lista de diccionarios para formato raw_data
+        raw_data = df.to_dict(orient='records')
+        
+        # Crear el diccionario con estructura correcta
+        processed_data = {
+            "raw_data": raw_data,  # Lista de diccionarios con todos los registros
+            "aggregations": aggregations,  # Diccionario con agregaciones precalculadas
+            "kpis": kpis  # Diccionario con KPIs precalculados
         }
-
+        
+        print(f"DEBUG: Estructura de datos procesados creada correctamente")
+        return processed_data
+    
     def _filter_and_aggregate_sales(self, filters=None, aggregation=None):
         """
         Aplica filtros y agregaciones a los datos de ventas

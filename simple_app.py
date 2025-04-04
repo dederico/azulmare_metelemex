@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 import traceback
 import datetime
 import json
+from data import DataManager
+
+data_manager = DataManager()
 
 # Load environment variables first to ensure API key is available
 load_dotenv()
@@ -53,16 +56,38 @@ def get_marketing_metrics(metric_name=None):
 @function_tool
 def get_sales_data(metric_name=None, time_period="current"):
     """Get sales metrics from the latest data"""
+    print(f"FUNCTION_CALL: Entering get_sales_data function with metric_name={metric_name}, time_period={time_period}")
     sales_data = data_manager.get_sales_data()
+    print(f"DEBUG INSIDE FUNCTION CALL: Retrieved sales_data: {sales_data}")
+    if isinstance(sales_data, dict) and 'error' in sales_data:
+        return sales_data  # Retorna el error si hay uno
     
+    kpis = sales_data.get('kpis', {})
+    print(f"DEBUG INSIDE FUNCTION CALL: KPIs: {kpis}")
     if metric_name:
-        if metric_name in sales_data:
+        if metric_name in kpis:
+            return {metric_name: kpis[metric_name]}
+        elif metric_name in sales_data:
             return {metric_name: sales_data[metric_name]}
         else:
             return {"error": f"Metric '{metric_name}' not found in sales data"}
     
-    # Return all metrics if no specific one requested
-    return sales_data
+    # Si no se solicita una métrica específica, devuelve todos los KPIs y datos relevantes
+    return {
+        'kpis': kpis,
+        'aggregations': sales_data.get('aggregations', {}),
+        'data_summary': {
+            'total_records': len(sales_data.get('raw_data', [])),
+            'aggregations_available': list(sales_data.get('aggregations', {}).keys())
+        }
+    }
+@function_tool
+def get_total_sales():
+    print(f"FUNCTION_CALL: Entering get_total_sales function")
+    """Get the total sales from the latest data"""
+    sales_data = data_manager.get_sales_data()
+    total_sales = sales_data.get('kpis', {}).get('total_ventas', 0)
+    return {"total_sales": total_sales}
 
 @function_tool
 def analyze_sales_by_dimension(dimension, date_range=None, filter_by=None):
@@ -195,18 +220,23 @@ assistant = DirectAgent(
     Your role is to analyze this data and provide insights to help executives make informed decisions.
     
     When answering questions:
-    1. Use the appropriate tool to fetch relevant data
-    2. Analyze the data to extract meaningful insights
-    3. Provide clear, concise recommendations based on the data
-    4. Support your conclusions with specific data points
+    1. ALWAYS use the get_sales_data() function to fetch the latest sales information.
+    2. Pay close attention to the 'kpis' section of the data returned by get_sales_data().
+    3. Use the specific KPIs (like total_vendedores, top_vendedor, etc.) in your responses.
+    4. Analyze the data to extract meaningful insights.
+    5. Provide clear, concise recommendations based on the data.
+    6. Support your conclusions with specific data points from the KPIs.
     
     Be professional, precise, and focus on actionable insights.
-    """,
+    Always check the data before answering, even if you think you know the answer.
+    """
+,
     tools=[
         get_marketing_metrics,
         get_sales_data,
         get_logistics_data,
-        get_collection_data
+        get_collection_data,
+        get_total_sales
     ],
     model="gpt-4o"  # Specify a valid model name explicitly
 )
