@@ -7,6 +7,8 @@ import logging
 import datetime
 import pandas as pd
 from typing import Dict, Any, Optional
+import traceback
+
 
 from utils.data_processors import (
     process_marketing_data,
@@ -78,16 +80,386 @@ class DataManager:
             self.refresh_marketing_data()
         return self._marketing_data or {}
     
-    def get_sales_data(self) -> Dict[str, Any]:
+    def get_sales_data(self, filters=None, aggregation=None) -> Dict[str, Any]:
         """
-        Get sales data
+        Obtener datos de ventas con posibilidad de filtrado y agregación
+        
+        Args:
+            filters: Diccionario con filtros (ej: {'VENDEDOR': 'GOL Tampico'})
+            aggregation: Tipo de agregación ('por_vendedor', 'por_cliente', 'por_mes', etc.)
         
         Returns:
-            Sales data dictionary
+            Datos de ventas procesados según filtros y agregaciones
         """
-        if self._sales_data is None:
-            self.refresh_sales_data()
-        return self._sales_data or {}
+        try:
+            # Registro para depuración
+            print(f"DEBUG: Solicitando datos de ventas. filters={filters}, aggregation={aggregation}")
+            
+            # Si no tenemos los datos en memoria, cargarlos
+            if self._sales_data is None:
+                print("DEBUG: self._sales_data es None, cargando datos...")
+                # Verificar si existen en caché
+                cache_file = os.path.join(self.cache_dir, "sales_data.json")
+                if os.path.exists(cache_file):
+                    print(f"DEBUG: Cargando desde caché: {cache_file}")
+                    with open(cache_file, 'r') as f:
+                        self._sales_data = json.load(f)
+                        logger.info(f"Datos de ventas cargados desde caché: {cache_file}")
+                else:
+                    print("DEBUG: Caché no encontrado, procesando datos desde fuente...")
+                    # Usar pandas para procesar eficientemente el archivo grande
+                    import pandas as pd
+                    
+                    # Determinar la fuente de datos (endpoint o archivo local)
+                    source = config.DATA_ENDPOINTS.get('sales')
+                    if source:
+                        print(f"DEBUG: Usando fuente de datos API: {source}")
+                        # Descargar desde API
+                        from endpoints.data_endpoints import fetch_data
+                        raw_data = fetch_data(source)
+                        
+                        # Convertir a DataFrame
+                        sales_df = pd.DataFrame(raw_data)
+                        logger.info(f"Datos de ventas descargados desde API: {len(sales_df)} registros")
+                    else:
+                        # Cargar desde archivo local
+                        local_file = os.path.join('data_files', 'sales_data.json')
+                        print(f"DEBUG: Buscando archivo local: {local_file}")
+                        if os.path.exists(local_file):
+                            logger.info(f"Cargando datos de ventas desde archivo local: {local_file}")
+                            
+                            # Determinar si el archivo es grande (>50MB)
+                            file_size = os.path.getsize(local_file) / (1024 * 1024)  # Tamaño en MB
+                            print(f"DEBUG: Tamaño del archivo: {file_size} MB")
+                            
+                            if file_size > 50:
+                                print("DEBUG: Archivo grande, procesando en chunks...")
+                                # Usar chunks para archivos muy grandes
+                                chunks = []
+                                for chunk in pd.read_json(local_file, lines=True, chunksize=10000):
+                                    chunks.append(chunk)
+                                sales_df = pd.concat(chunks)
+                                logger.info(f"Archivo grande procesado en chunks: {len(sales_df)} registros")
+                            else:
+                                print("DEBUG: Cargando archivo completo...")
+                                # Cargar archivo completo
+                                sales_df = pd.read_json(local_file, lines=True)
+                                logger.info(f"Archivo cargado completo: {len(sales_df)} registros")
+                        else:
+                            print("DEBUG: Archivo local no encontrado, usando datos de muestra...")
+                            # Si no hay datos, generar muestra
+                            logger.warning(f"Archivo de ventas no encontrado: {local_file}. Usando datos de muestra.")
+                            sales_df = pd.DataFrame(self._get_sample_sales_data())
+                    
+                    print(f"DEBUG: Preprocesando datos, shape={sales_df.shape}")
+                    # Preprocesar datos para análisis eficiente
+                    self._sales_data = self._preprocess_sales_data(sales_df)
+                    
+                    print(f"DEBUG: Guardando en caché: {cache_file}")
+                    # Guardar en caché
+                    with open(cache_file, 'w') as f:
+                        json.dump(self._sales_data, f)
+                        logger.info(f"Datos de ventas guardados en caché: {cache_file}")
+            
+            # Verificar estructura después de cargar
+            print(f"DEBUG: Tipo de self._sales_data: {type(self._sales_data)}")
+            if isinstance(self._sales_data, dict):
+                print(f"DEBUG: Claves en self._sales_data: {list(self._sales_data.keys())}")
+            elif isinstance(self._sales_data, list):
+                print(f"DEBUG: self._sales_data es una lista con {len(self._sales_data)} elementos")
+                if self._sales_data:
+                    print(f"DEBUG: Tipo del primer elemento: {type(self._sales_data[0])}")
+                    print(f"DEBUG: Muestra del primer elemento: {str(self._sales_data[0])[:100]}...")
+            
+            # Obtener la versión filtrada de los datos
+            print(f"DEBUG: Llamando a _filter_and_aggregate_sales con filters={filters}, aggregation={aggregation}")
+            try:
+                result = self._filter_and_aggregate_sales(filters, aggregation)
+                print("DEBUG: _filter_and_aggregate_sales completado exitosamente")
+                return result
+            except Exception as e:
+                print(f"ERROR EN _filter_and_aggregate_sales: {str(e)}")
+                print(f"TRACEBACK: {traceback.format_exc()}")
+                return {"error": f"Error en filtrado/agregación: {str(e)}", "traceback": traceback.format_exc()}
+                
+        except Exception as e:
+            print(f"ERROR GENERAL: {str(e)}")
+            print(f"TRACEBACK COMPLETO: {traceback.format_exc()}")
+            logger.error(f"Error procesando datos de ventas: {str(e)}")
+            return {"error": str(e), "traceback": traceback.format_exc()}
+
+    def _preprocess_sales_data(self, df):
+        """
+        Preprocesa los datos de ventas para un acceso y análisis más eficiente
+        
+        Args:
+            df: DataFrame de pandas con los datos de ventas
+            
+        Returns:
+            Diccionario con datos procesados y métricas precalculadas
+        """
+        # Asegurar que las fechas estén en formato datetime
+        if 'FECHA' in df.columns:
+            df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
+            
+            # Añadir columnas calculadas útiles
+            df['MES'] = df['FECHA'].dt.month
+            df['AÑO'] = df['FECHA'].dt.year
+            df['TRIMESTRE'] = df['FECHA'].dt.quarter
+            df['SEMANA'] = df['FECHA'].dt.isocalendar().week
+        
+        # Calcular el total de ventas (asumiendo que IMPORTE_TOTAL es el valor de la venta)
+        total_ventas = df['IMPORTE_TOTAL'].sum() if 'IMPORTE_TOTAL' in df.columns else 0
+        
+        # Realizar agregaciones precalculadas para consultas comunes
+        aggregations = {}
+        
+        if 'VENDEDOR' in df.columns and 'IMPORTE_TOTAL' in df.columns:
+            aggregations["ventas_por_vendedor"] = df.groupby('VENDEDOR')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).to_dict('index')
+        
+        if 'CLIENTE' in df.columns and 'IMPORTE_TOTAL' in df.columns:
+            aggregations["ventas_por_cliente"] = df.groupby('CLIENTE')['IMPORTE_TOTAL'].agg(['sum', 'count', 'mean']).to_dict('index')
+        
+        if all(col in df.columns for col in ['AÑO', 'MES', 'IMPORTE_TOTAL']):
+            # Agrupar por año y mes
+            monthly_sales = df.groupby(['AÑO', 'MES'])['IMPORTE_TOTAL'].sum()
+            # Convertir a formato más fácil de usar
+            ventas_por_mes = {}
+            for (año, mes), valor in monthly_sales.items():
+                key = f"{año}-{mes:02d}"
+                ventas_por_mes[key] = float(valor)
+            aggregations["ventas_por_mes"] = ventas_por_mes
+        
+        if 'ARTICULO' in df.columns and 'IMPORTE_TOTAL' in df.columns:
+            aggregations["ventas_por_articulo"] = df.groupby('ARTICULO')['IMPORTE_TOTAL'].agg(['sum', 'count']).to_dict('index')
+        
+        if all(col in df.columns for col in ['AÑO', 'TRIMESTRE', 'IMPORTE_TOTAL']):
+            # Agrupar por año y trimestre
+            quarterly_sales = df.groupby(['AÑO', 'TRIMESTRE'])['IMPORTE_TOTAL'].sum()
+            # Convertir a formato más fácil de usar
+            ventas_por_trimestre = {}
+            for (año, trimestre), valor in quarterly_sales.items():
+                key = f"{año}-Q{trimestre}"
+                ventas_por_trimestre[key] = float(valor)
+            aggregations["ventas_por_trimestre"] = ventas_por_trimestre
+        
+        if 'LINEA' in df.columns and 'IMPORTE_TOTAL' in df.columns:
+            aggregations["ventas_por_linea"] = df.groupby('LINEA')['IMPORTE_TOTAL'].agg(['sum', 'count']).to_dict('index')
+        
+        # Calcular KPIs críticos
+        kpis = {
+            "total_ventas": float(total_ventas),
+            "ticket_promedio": float(df['IMPORTE_TOTAL'].mean()) if 'IMPORTE_TOTAL' in df.columns else 0,
+            "total_transacciones": len(df),
+            "total_clientes": df['CLIENTE'].nunique() if 'CLIENTE' in df.columns else 0,
+            "total_vendedores": df['VENDEDOR'].nunique() if 'VENDEDOR' in df.columns else 0,
+            "monto_max_venta": float(df['IMPORTE_TOTAL'].max()) if 'IMPORTE_TOTAL' in df.columns else 0,
+            "ultima_actualizacion": datetime.datetime.now().isoformat()
+        }
+        
+        # Añadir datos de tendencia (últimos 6 meses si hay datos suficientes)
+        if all(col in df.columns for col in ['FECHA', 'IMPORTE_TOTAL']):
+            # Ordenar por fecha
+            df_sorted = df.sort_values('FECHA')
+            
+            # Obtener los últimos 6 meses
+            last_6_months = {}
+            today = datetime.datetime.now()
+            for i in range(6):
+                target_date = today - datetime.timedelta(days=30 * i)
+                month_key = f"{target_date.year}-{target_date.month:02d}"
+                
+                month_data = df_sorted[
+                    (df_sorted['FECHA'].dt.year == target_date.year) & 
+                    (df_sorted['FECHA'].dt.month == target_date.month)
+                ]
+                
+                last_6_months[month_key] = {
+                    "ventas": float(month_data['IMPORTE_TOTAL'].sum()) if len(month_data) > 0 else 0,
+                    "transacciones": len(month_data),
+                    "clientes": month_data['CLIENTE'].nunique() if 'CLIENTE' in month_data else 0
+                }
+            
+            kpis["tendencia_6_meses"] = last_6_months
+        
+        # Convertir el DataFrame a diccionario para guardarlo en caché
+        # Pero mantener solo los datos necesarios para reducir tamaño
+        essential_columns = ['ID', 'FECHA', 'VENDEDOR', 'CLIENTE', 'ARTICULO', 'IMPORTE_TOTAL', 'CANTIDAD']
+        raw_data = df[essential_columns].to_dict(orient='records') if all(col in df.columns for col in essential_columns) else df.to_dict(orient='records')
+        
+        return {
+            "raw_data": raw_data,  # Mantener datos esenciales
+            "aggregations": aggregations,  # Guardar agregaciones precalculadas
+            "kpis": kpis  # Guardar KPIs precalculados
+        }
+
+    def _filter_and_aggregate_sales(self, filters=None, aggregation=None):
+        """
+        Aplica filtros y agregaciones a los datos de ventas
+        """
+        print(f"DEBUG _filter_and_aggregate_sales: Iniciando con filters={filters}, aggregation={aggregation}")
+        
+        # Verificación inicial crítica
+        print(f"DEBUG: Tipo de self._sales_data en _filter_and_aggregate_sales: {type(self._sales_data)}")
+        
+        # Si sales_data es una lista, esto causaría el error "list indices must be integers or slices, not str"
+        if isinstance(self._sales_data, list):
+            print("ERROR ENCONTRADO: self._sales_data es una lista, pero se intenta acceder con claves de diccionario.")
+            print("Esto causa el error: list indices must be integers or slices, not str")
+            
+            # Convertirlo a un formato de diccionario para evitar el error
+            processed_data = {
+                "raw_data": self._sales_data,
+                "aggregations": {},
+                "kpis": {"total_ventas": 0}
+            }
+            self._sales_data = processed_data
+            print("DEBUG: self._sales_data convertido a formato de diccionario")
+        
+        if not self._sales_data:
+            print("DEBUG: self._sales_data está vacío")
+            return {"error": "No hay datos de ventas disponibles"}
+        if not self._sales_data:
+            return {"error": "No hay datos de ventas disponibles"}
+        
+        # Si no hay filtros ni agregación, devolver los KPIs generales
+        if not filters and not aggregation:
+            return {
+                "kpis": self._sales_data["kpis"],
+                "data_summary": {
+                    "total_records": len(self._sales_data["raw_data"]),
+                    "aggregations_available": list(self._sales_data["aggregations"].keys())
+                }
+            }
+        
+        # Si hay una agregación específica y está precalculada, devolverla directamente
+        if aggregation and not filters:
+            if aggregation in self._sales_data["aggregations"]:
+                return {
+                    "aggregation": aggregation,
+                    "data": self._sales_data["aggregations"][aggregation]
+                }
+        
+        # Si hay filtros, necesitamos aplicarlos a los datos crudos
+        if filters:
+            # Verificar que raw_data es una lista
+            raw_data = self._sales_data.get("raw_data", [])
+            if not isinstance(raw_data, list):
+                return {"error": "Los datos sin procesar no están en el formato esperado (lista)"}
+            
+            # Convertir datos crudos a DataFrame para filtrado eficiente
+            import pandas as pd
+            
+            # Verificar que hay datos para procesar
+            if not raw_data:
+                return {
+                    "filters": filters,
+                    "aggregation": aggregation,
+                    "result": "No hay datos disponibles para aplicar filtros",
+                    "data": {}
+                }
+            
+            try:
+                df = pd.DataFrame(raw_data)
+            except Exception as e:
+                return {
+                    "error": f"Error al convertir datos a DataFrame: {str(e)}",
+                    "traceback": traceback.format_exc()
+                }
+            
+            # Aplicar cada filtro
+            for field, value in filters.items():
+                if field in df.columns:
+                    # Manejar diferentes tipos de filtros
+                    if isinstance(value, list):
+                        # Filtro por lista de valores
+                        df = df[df[field].isin(value)]
+                    elif isinstance(value, dict) and all(k in ['min', 'max'] for k in value.keys()):
+                        # Filtro por rango
+                        if 'min' in value and value['min'] is not None:
+                            df = df[df[field] >= value['min']]
+                        if 'max' in value and value['max'] is not None:
+                            df = df[df[field] <= value['max']]
+                    elif isinstance(value, dict) and 'regex' in value:
+                        # Filtro por expresión regular
+                        df = df[df[field].astype(str).str.contains(value['regex'], na=False)]
+                    elif isinstance(value, dict) and 'date_range' in value:
+                        # Filtro por rango de fechas
+                        if field == 'FECHA' and 'from' in value['date_range'] and 'to' in value['date_range']:
+                            try:
+                                from_date = pd.to_datetime(value['date_range']['from'])
+                                to_date = pd.to_datetime(value['date_range']['to'])
+                                df = df[(df[field] >= from_date) & (df[field] <= to_date)]
+                            except Exception as e:
+                                logger.warning(f"Error al procesar rango de fechas: {str(e)}")
+                    else:
+                        # Filtro simple por valor exacto
+                        df = df[df[field] == value]
+            
+            # Si después de filtrar no quedan datos, devolver resultado vacío
+            if len(df) == 0:
+                return {
+                    "filters": filters,
+                    "aggregation": aggregation,
+                    "result": "No hay datos que cumplan con los filtros especificados",
+                    "data": {}
+                }
+            
+            # Si hay agregación, aplicarla a los datos filtrados
+            if aggregation:
+                try:
+                    if aggregation == "por_vendedor" and "VENDEDOR" in df.columns and "IMPORTE_TOTAL" in df.columns:
+                        result = df.groupby("VENDEDOR")["IMPORTE_TOTAL"].agg(['sum', 'count', 'mean']).reset_index()
+                        return {
+                            "filters": filters,
+                            "aggregation": aggregation,
+                            "data": result.to_dict(orient='records')
+                        }
+                    elif aggregation == "por_cliente" and "CLIENTE" in df.columns and "IMPORTE_TOTAL" in df.columns:
+                        result = df.groupby("CLIENTE")["IMPORTE_TOTAL"].agg(['sum', 'count', 'mean']).reset_index()
+                        return {
+                            "filters": filters,
+                            "aggregation": aggregation,
+                            "data": result.to_dict(orient='records')
+                        }
+                    elif aggregation == "por_mes" and "FECHA" in df.columns and "IMPORTE_TOTAL" in df.columns:
+                        # Asegurar que FECHA sea datetime
+                        df['FECHA'] = pd.to_datetime(df['FECHA'])
+                        df['MES'] = df['FECHA'].dt.month
+                        df['AÑO'] = df['FECHA'].dt.year
+                        result = df.groupby(['AÑO', 'MES'])['IMPORTE_TOTAL'].agg(['sum', 'count']).reset_index()
+                        return {
+                            "filters": filters,
+                            "aggregation": aggregation,
+                            "data": result.to_dict(orient='records')
+                        }
+                    else:
+                        # Agregación no soportada
+                        return {
+                            "filters": filters,
+                            "aggregation": aggregation,
+                            "result": f"Agregación '{aggregation}' no soportada o faltan campos requeridos",
+                            "data": df.to_dict(orient='records')
+                        }
+                except Exception as e:
+                    return {
+                        "error": f"Error al aplicar agregación: {str(e)}",
+                        "traceback": traceback.format_exc()
+                    }
+            
+            # Si no hay agregación, devolver los datos filtrados
+            return {
+                "filters": filters,
+                "total_records": len(df),
+                "data": df.to_dict(orient='records')
+            }
+        
+        # Si llegamos aquí, la combinación de filtros y agregación no está soportada
+        return {
+            "error": "Combinación de filtros y agregación no soportada",
+            "filters": filters,
+            "aggregation": aggregation
+        }
     
     def get_logistics_data(self) -> Dict[str, Any]:
         """

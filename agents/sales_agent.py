@@ -58,7 +58,7 @@ class SalesAgent(BaseAgent):
         self, 
         context: RunContextWrapper[AgentContext], 
         metric_name: str = None,
-        time_period: str = "current"  # Options: current, last_month, last_quarter, ytd
+        time_period: str = "total"  # Options: total, monthly, quarterly, yearly
     ) -> Dict[str, Any]:
         """
         Get sales metrics from the latest data
@@ -74,21 +74,31 @@ class SalesAgent(BaseAgent):
         try:
             sales_data = self.data_manager.get_sales_data()
             
-            # Filter by time period if needed
-            if time_period != "current" and "periods" in sales_data:
-                if time_period in sales_data["periods"]:
-                    sales_data = sales_data["periods"][time_period]
-                else:
-                    return {"error": f"Time period '{time_period}' not found in sales data"}
-            
+            if time_period == "monthly":
+                time_data = sales_data['by_month']
+            elif time_period == "quarterly":
+                time_data = sales_data['by_quarter']
+            elif time_period == "yearly":
+                time_data = sales_data['by_year']
+            else:
+                time_data = None
+
             if metric_name:
                 if metric_name in sales_data:
                     return {metric_name: sales_data[metric_name]}
+                elif time_data:
+                    return {metric_name: time_data}
                 else:
                     return {"error": f"Metric '{metric_name}' not found in sales data"}
-            
-            # Return all metrics if no specific one requested
-            return sales_data
+                
+            # Return summary metrics if no specific one requested
+            return {
+                "total_revenue": sales_data['total_revenue'],
+                "total_units": sales_data['total_units'],
+                "avg_deal_size": sales_data['avg_deal_size'],
+                "total_sales": sales_data['total_sales'],
+                "time_period_data": time_data
+            }
         except Exception as e:
             logger.error(f"Error getting sales metrics: {str(e)}")
             return {"error": str(e)}
@@ -100,8 +110,8 @@ class SalesAgent(BaseAgent):
     async def _analyze_sales_performance(
         self, 
         context: RunContextWrapper[AgentContext], 
-        dimension: str = "overall",  # Options: overall, by_product, by_region, by_rep
-        time_period: str = "current"
+        dimension: str = "overall",  # Options: overall, by_product, by_customer, by_region, by_rep
+        top_n: int = 5
     ) -> Dict[str, Any]:
         """
         Analyze sales performance across different dimensions
@@ -117,27 +127,20 @@ class SalesAgent(BaseAgent):
         try:
             sales_data = self.data_manager.get_sales_data()
             
-            # Filter by time period if needed
-            if time_period != "current" and "periods" in sales_data:
-                if time_period in sales_data["periods"]:
-                    sales_data = sales_data["periods"][time_period]
-                else:
-                    return {"error": f"Time period '{time_period}' not found in sales data"}
-            
-            # Analyze based on dimension
             if dimension == "overall":
                 return {
-                    "total_revenue": sales_data.get("total_revenue", 0),
-                    "total_units": sales_data.get("total_units", 0),
-                    "average_deal_size": sales_data.get("avg_deal_size", 0),
-                    "conversion_rate": sales_data.get("conversion_rate", 0)
+                    "total_revenue": sales_data['total_revenue'],
+                    "total_units": sales_data['total_units'],
+                    "avg_deal_size": sales_data['avg_deal_size'],
+                    "total_sales": sales_data['total_sales']
                 }
-            elif dimension == "by_product" and "products" in sales_data:
-                return {"product_performance": sales_data["products"]}
-            elif dimension == "by_region" and "regions" in sales_data:
-                return {"regional_performance": sales_data["regions"]}
-            elif dimension == "by_rep" and "sales_reps" in sales_data:
-                return {"rep_performance": sales_data["sales_reps"]}
+            elif dimension in ["by_product", "by_customer", "by_region", "by_rep"]:
+                data = sales_data[dimension]
+                sorted_data = sorted(data, key=lambda x: x['revenue'], reverse=True)
+                return {
+                    "top_performers": sorted_data[:top_n],
+                    "total_count": len(data)
+                }
             else:
                 return {"error": f"Analysis dimension '{dimension}' not available"}
         except Exception as e:

@@ -1,0 +1,57 @@
+import pandas as pd
+from typing import Dict, Any, List
+import json
+from datetime import datetime
+
+class DataManager:
+    def __init__(self):
+        self._sales_data = None
+
+    def refresh_sales_data(self):
+        with open('data/cached/sales_data.json', 'r') as f:
+            raw_data = json.load(f)
+        
+        df = pd.DataFrame(raw_data)
+        df['FECHA'] = pd.to_datetime(df['FECHA'])
+        
+        self._sales_data = {
+            'total_revenue': df['IMPORTE_TOTAL'].sum(),
+            'total_units': df['CANTIDAD'].sum(),
+            'avg_deal_size': df['IMPORTE_TOTAL'].mean(),
+            'total_sales': len(df),
+            'by_product': self._aggregate_by_column(df, 'ARTICULO'),
+            'by_customer': self._aggregate_by_column(df, 'CLIENTE'),
+            'by_region': self._aggregate_by_column(df, 'VENDEDOR'),
+            'by_sales_rep': self._aggregate_by_column(df, 'NOMBRE_ASESOR'),
+            'by_month': self._aggregate_by_time(df, 'M'),
+            'by_quarter': self._aggregate_by_time(df, 'Q'),
+            'by_year': self._aggregate_by_time(df, 'Y'),
+            'raw_data': raw_data  # Keep the raw data for potential detailed queries
+        }
+
+    def _aggregate_by_column(self, df: pd.DataFrame, column: str) -> List[Dict[str, Any]]:
+        return df.groupby(column).agg({
+            'IMPORTE_TOTAL': 'sum',
+            'CANTIDAD': 'sum',
+            'ID': 'count'
+        }).reset_index().rename(columns={
+            'IMPORTE_TOTAL': 'revenue',
+            'CANTIDAD': 'units',
+            'ID': 'sales_count'
+        }).to_dict('records')
+
+    def _aggregate_by_time(self, df: pd.DataFrame, period: str) -> List[Dict[str, Any]]:
+        return df.set_index('FECHA').resample(period).agg({
+            'IMPORTE_TOTAL': 'sum',
+            'CANTIDAD': 'sum',
+            'ID': 'count'
+        }).reset_index().rename(columns={
+            'IMPORTE_TOTAL': 'revenue',
+            'CANTIDAD': 'units',
+            'ID': 'sales_count'
+        }).to_dict('records')
+
+    def get_sales_data(self) -> Dict[str, Any]:
+        if self._sales_data is None:
+            self.refresh_sales_data()
+        return self._sales_data
